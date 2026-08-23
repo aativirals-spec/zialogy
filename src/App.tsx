@@ -29,6 +29,13 @@ import { VOICES } from './data/voices';
 import { INITIAL_VIDEOS } from './data/sampleVideos';
 import { getDirectorFallbackPrompt } from './data/directorPromptRules';
 import { cleanDialogueForTTS } from './utils/audioSynthesizer';
+import {
+  startClientVideoGeneration,
+  accelerateClientJob,
+  cancelClientJob,
+  buildRecentVideoFromJob,
+} from './services/videoGenerationService';
+import { enhancePromptWithGemini } from './services/geminiService';
 
 export default function App() {
   // Authentication gate state
@@ -100,40 +107,19 @@ export default function App() {
     };
   }, []);
 
-  // Upload file to server helper
-  const uploadFileIfNeeded = async (dataUrl: string | null, targetName: string): Promise<string> => {
-    if (!dataUrl) return '';
-    if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
-      return dataUrl;
-    }
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataUrl,
-          filename: `${targetName}_${Date.now()}.png`,
-          type: 'image',
-        }),
-      });
-      const data = await res.json();
-      return data.url || dataUrl;
-    } catch {
-      return dataUrl;
-    }
-  };
-
-  // Start Generation Flow
+  // Start Generation Flow (Client-Side Standalone Engine)
   const handleGenerate = async () => {
     setIsGenerating(true);
 
     try {
-      // 1. Upload assets
-      const uploadedProductUrl = await uploadFileIfNeeded(productImage, 'product');
-      const uploadedBoxLogoUrl = await uploadFileIfNeeded(boxLogoImage, 'box_logo');
-      const uploadedEndSlideUrl = await uploadFileIfNeeded(endSlideImage, 'end_slide');
+      // 1. Prepare assets (using direct data URLs or standard fallback)
+      const resolvedProductUrl =
+        productImage ||
+        'https://images.unsplash.com/photo-1592945403244-b3fbafd7f539?q=80&w=800&auto=format&fit=crop';
+      const resolvedBoxLogoUrl = boxLogoImage || undefined;
+      const resolvedEndSlideUrl = endSlideImage || undefined;
 
-      // 2. Compute effective prompt (using user prompt or autonomous director prompt)
+      // 2. Compute effective prompt
       let effectivePrompt = cleanDialogueForTTS(prompt.trim());
       if (!effectivePrompt) {
         effectivePrompt = getDirectorFallbackPrompt({
@@ -144,17 +130,10 @@ export default function App() {
       }
       effectivePrompt = cleanDialogueForTTS(effectivePrompt);
 
-      // 3. Prepare payload matching RunPod LTX-2 requirements
-      const resolvedProductUrl =
-        uploadedProductUrl ||
-        'https://images.unsplash.com/photo-1592945403244-b3fbafd7f539?q=80&w=800&auto=format&fit=crop';
-      const resolvedBoxLogoUrl = uploadedBoxLogoUrl || undefined;
-      const resolvedEndSlideUrl = uploadedEndSlideUrl || undefined;
-
       const inputPayload: GenerationInput = {
         prompt: effectivePrompt,
         product_url: resolvedProductUrl,
-        logo_url: resolvedBoxLogoUrl, // Boxlogo sits in corner throughout ad except endslide
+        logo_url: resolvedBoxLogoUrl,
         end_logo_url: resolvedEndSlideUrl,
         orientation,
         branch: 'ltx2',
@@ -162,51 +141,38 @@ export default function App() {
         brand_id: 'ZIALOGY',
         flow_type: adStyle || 'ad',
         product_category: 'Commercial Film',
-        // Visual UI helpers
         product_image_url: resolvedProductUrl,
         logo_image_url: resolvedBoxLogoUrl,
         end_slide_image_url: resolvedEndSlideUrl,
         voice: selectedVoice.name,
         style: adStyle,
         duration: orientation === 'portrait' ? 15 : 24,
+        attempt_count: attemptCount,
       };
 
       // Increment attempt rotation for subsequent zero-prompt generations
       setAttemptCount((prev) => (prev >= 4 ? 4 : prev + 1));
-
-      // 4. POST /api/generate
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: { ...inputPayload, attempt_count: attemptCount } }),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server responded with status ${response.status}`);
-      }
-
-      const data = await response.json();
-      const jobId = data.job_id;
-
-      // Initialize initial client job representation
-      const initialJob: GenerationJob = {
-        id: jobId,
-        status: 'processing',
-        progress: 5,
-        current_step: 'Analyzing prompt brief & scene dynamics',
-        step_index: 1,
-        total_steps: 6,
-        estimated_time_remaining_seconds: 520,
-        input: inputPayload,
-        created_at: new Date().toISOString(),
-      };
-
-      setCurrentJob(initialJob);
       setShowGenerationModal(true);
 
-      // Start Polling loop
-      startJobPolling(jobId);
+      // 3. Start client-side video generation engine
+      await startClientVideoGeneration(inputPayload, (updatedJob: GenerationJob) => {
+        setCurrentJob(updatedJob);
+
+        if (updatedJob.status === 'completed') {
+          setIsGenerating(false);
+
+          // Append to recent videos
+          const newVideoItem = buildRecentVideoFromJob(updatedJob);
+          setRecentVideos((prev) => [newVideoItem, ...prev.filter((v) => v.id !== newVideoItem.id)]);
+
+          // Automatically close modal and navigate to video result page
+          setShowGenerationModal(false);
+          setActiveResultVideo(newVideoItem);
+          setCurrentView('video-result');
+        } else if (updatedJob.status === 'failed') {
+          setIsGenerating(false);
+        }
+      });
     } catch (error: any) {
       console.error('Generation request failed:', error);
       alert(`Failed to start video generation: ${error.message || error}`);
@@ -214,64 +180,10 @@ export default function App() {
     }
   };
 
-  // Polling logic
-  const startJobPolling = (jobId: string) => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/jobs/${jobId}`);
-        if (!res.ok) return;
-
-        const updatedJob: GenerationJob = await res.json();
-        setCurrentJob(updatedJob);
-
-        if (updatedJob.status === 'completed') {
-          clearInterval(pollingIntervalRef.current);
-          setIsGenerating(false);
-
-          // Append to recent videos
-          const newVideoItem: RecentVideo = {
-            id: updatedJob.id,
-            title: updatedJob.title || `${updatedJob.input.style.toUpperCase()} Commercial`,
-            duration: updatedJob.duration_str || '00:24',
-            timestamp: 'Just now',
-            thumbnail: updatedJob.thumbnail_url || updatedJob.input.product_image_url || '',
-            videoUrl: updatedJob.result_url || '',
-            orientation: updatedJob.input.orientation,
-            style: updatedJob.input.style,
-            voice: updatedJob.input.voice,
-            brandId: 'ZIALOGY',
-            productCategory: 'Commercial Film',
-            prompt: updatedJob.input.prompt,
-          };
-
-          setRecentVideos((prev) => [newVideoItem, ...prev.filter((v) => v.id !== newVideoItem.id)]);
-
-          // Automatically close processing modal and land directly on Video Result Page!
-          setShowGenerationModal(false);
-          setActiveResultVideo(newVideoItem);
-          setCurrentView('video-result');
-        } else if (updatedJob.status === 'failed') {
-          clearInterval(pollingIntervalRef.current);
-          setIsGenerating(false);
-        }
-      } catch (err) {
-        console.warn('Polling error:', err);
-      }
-    }, 1500);
-  };
-
   // Accelerate Job for live demo/testing
-  const handleAccelerateJob = async () => {
+  const handleAccelerateJob = () => {
     if (!currentJob) return;
-    try {
-      await fetch(`/api/jobs/${currentJob.id}/accelerate`, { method: 'POST' });
-    } catch (err) {
-      console.error('Failed to accelerate job:', err);
-    }
+    accelerateClientJob(currentJob.id);
   };
 
   // Delete Video helper
@@ -293,23 +205,18 @@ export default function App() {
     }
   };
 
-  // AI Prompt Polish
+  // AI Prompt Polish (Uses client-side Gemini or Autonomous Director Engine)
   const handleAutoEnhancePrompt = async () => {
     setIsEnhancingPrompt(true);
     try {
-      const res = await fetch('/api/script-assist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          category: 'Commercial Film',
-          style: adStyle,
-          voice: selectedVoice.name,
-        }),
-      });
-      const data = await res.json();
-      if (data.enhancedPrompt) {
-        setPrompt(cleanDialogueForTTS(data.enhancedPrompt));
+      const result = await enhancePromptWithGemini(
+        prompt,
+        'Commercial Film',
+        adStyle,
+        selectedVoice.name
+      );
+      if (result?.enhancedPrompt) {
+        setPrompt(cleanDialogueForTTS(result.enhancedPrompt));
       }
     } catch (err) {
       console.error('Enhance failed:', err);

@@ -18,6 +18,7 @@ import {
 import { VoiceOption } from '../types';
 import { VOICES } from '../data/voices';
 import { playVoiceSample, stopVoiceSample } from '../utils/audioSynthesizer';
+import { matchVoiceWithGemini } from '../services/geminiService';
 
 interface VoiceOverSidebarProps {
   selectedVoice: string;
@@ -117,57 +118,16 @@ export const VoiceOverSidebar: React.FC<VoiceOverSidebarProps> = ({
   const handleSmartVoiceMatch = async () => {
     setIsAutoMatching(true);
     try {
-      const res = await fetch('/api/match-voice', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: currentPrompt || '',
-          category: productCategory || 'Commercial',
-          style: adStyle || 'ad',
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const matchedVoiceId = data.matchedVoiceId;
-        const found = VOICES.find(
-          (v) =>
-            v.id === matchedVoiceId ||
-            v.name.toLowerCase() === (data.voiceName || '').toLowerCase()
-        );
-        if (found) {
-          onSelectVoice(found);
-          setMatchSuccessNotice(`Matched "${found.name}" (${found.registerTag})`);
-          setTimeout(() => setMatchSuccessNotice(null), 4000);
-          return;
-        }
+      const result = await matchVoiceWithGemini(
+        currentPrompt || '',
+        productCategory || 'Commercial',
+        adStyle || 'ad'
+      );
+      if (result && result.matchedVoice) {
+        onSelectVoice(result.matchedVoice);
+        setMatchSuccessNotice(`Matched "${result.matchedVoice.name}" (${result.matchedVoice.registerTag})`);
+        setTimeout(() => setMatchSuccessNotice(null), 4000);
       }
-
-      // Local heuristic matching fallback
-      const promptLower = (currentPrompt || '').toLowerCase();
-      let best = VOICES[0]; // Hank Turner
-
-      if (promptLower.includes('urdu') || promptLower.includes('hindi') || promptLower.includes('desi')) {
-        best = VOICES.find(v => v.id === 'rudra') || VOICES.find(v => v.id === 'monika_sogam') || VOICES[5];
-      } else if (promptLower.includes('action') || promptLower.includes('tough') || promptLower.includes('monster') || promptLower.includes('truck') || promptLower.includes('concert')) {
-        best = VOICES.find(v => v.id === 'rex_thunder') || VOICES[6];
-      } else if (promptLower.includes('radio') || promptLower.includes('dj') || promptLower.includes('blast') || promptLower.includes('countdown')) {
-        best = VOICES.find(v => v.id === 'jerry_b') || VOICES[1];
-      } else if (promptLower.includes('tiktok') || promptLower.includes('ugc') || promptLower.includes('reels') || promptLower.includes('gen z')) {
-        best = VOICES.find(v => v.id === 'kristen') || VOICES[2];
-      } else if (promptLower.includes('british') || promptLower.includes('luxury') || promptLower.includes('fragrance') || promptLower.includes('classy')) {
-        best = VOICES.find(v => v.id === 'samara_x') || VOICES.find(v => v.id === 'corinne') || VOICES[14];
-      } else if (promptLower.includes('trailer') || promptLower.includes('dark') || promptLower.includes('slow') || promptLower.includes('grave')) {
-        best = VOICES.find(v => v.id === 'knox_dark') || VOICES[4];
-      } else if (promptLower.includes('villain') || promptLower.includes('noir') || promptLower.includes('calculating')) {
-        best = VOICES.find(v => v.id === 'jessica_anne_bogart') || VOICES[16];
-      } else if (promptLower.includes('sports') || promptLower.includes('fast') || promptLower.includes('energy')) {
-        best = VOICES.find(v => v.id === 'connor') || VOICES[17];
-      }
-
-      onSelectVoice(best);
-      setMatchSuccessNotice(`Matched "${best.name}" (${best.registerTag})`);
-      setTimeout(() => setMatchSuccessNotice(null), 4000);
     } catch {
       // safe fallback
     } finally {
