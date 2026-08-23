@@ -1,50 +1,50 @@
-export type VideoOrientation = 'landscape' | 'portrait';
+export type VideoOrientation = 'portrait' | 'landscape';
 export type AdStyle = 'ad' | 'ugc' | 'review';
 
 export interface VoiceOption {
   id: string;
   name: string;
   voiceCode: string;
-  elevenLabsId: string;
+  code?: string;
+  gender: 'male' | 'female';
+  accent: string;
+  category: 'commercial' | 'narrative' | 'influencer' | 'corporate' | 'urdu' | 'cinematic' | 'promo' | 'ugc' | 'deep' | string;
   registerTag: string;
   shortTagline: string;
-  fullDescription: string;
   description?: string;
-  sampleText: string;
-  gender: 'male' | 'female';
-  category: 'cinematic' | 'promo' | 'urdu' | 'ugc' | 'deep' | string;
-  waveformType: string;
-  accent: string;
-  isPro?: boolean;
+  tags: string[];
+  elevenLabsId: string;
   audioUrl?: string;
+  sampleText?: string;
+  isPro?: boolean;
   pitch?: number;
   speed?: number;
-  tags: string[];
+  waveformType?: 'cyan' | 'purple' | 'amber' | 'gold' | 'rose' | 'emerald' | 'blue' | 'default';
 }
 
 export interface GenerationInput {
   prompt: string;
-  product_url?: string;
+  product_url: string;
   logo_url?: string;
   end_logo_url?: string;
   orientation: VideoOrientation;
   branch?: string;
-  voice_id?: string;
+  voice_id: string;
   brand_id?: string;
-  flow_type?: string;
+  flow_type?: AdStyle;
   product_category?: string;
   product_image_url?: string;
   logo_image_url?: string;
   end_slide_image_url?: string;
-  voice?: string;
-  style?: AdStyle;
+  voice: string;
+  style: AdStyle;
   duration?: number;
   attempt_count?: number;
 }
 
 export interface GenerationJob {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed';
   progress: number;
   current_step: string;
   step_index: number;
@@ -52,13 +52,11 @@ export interface GenerationJob {
   estimated_time_remaining_seconds: number;
   input: GenerationInput;
   created_at: string;
-  completed_at?: string;
   result_url?: string;
   thumbnail_url?: string;
   title?: string;
   duration_str?: string;
-  error_message?: string;
-  storyboard?: any[];
+  error?: string;
 }
 
 export interface RecentVideo {
@@ -70,7 +68,7 @@ export interface RecentVideo {
   videoUrl: string;
   orientation: VideoOrientation;
   style: AdStyle;
-  voice?: string;
+  voice: string;
   brandId?: string;
   productCategory?: string;
   prompt?: string;
