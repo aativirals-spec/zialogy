@@ -1,0 +1,6 @@
+{
+  "name": "Zialogy - AI Video Ad Generator",
+  "description": "Generate high-converting AI brand films, commercial video ads, and UGC clips with customized voices, brand assets, and multi-format rendering.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
