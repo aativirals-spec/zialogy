@@ -61,7 +61,7 @@ export default function App() {
 
   const [adStyle, setAdStyle] = useState<AdStyle>('ad');
   const [orientation, setOrientation] = useState<VideoOrientation>('landscape');
-  const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICES[0]); // Lucas by default
+  const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICES[1] || VOICES[0]); // Hank Turner by default
   const [attemptCount, setAttemptCount] = useState<number>(1);
 
   // Generation & polling state
